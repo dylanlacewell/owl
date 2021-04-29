@@ -1013,8 +1013,6 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
 
   size_t totalSolidVoxelCount = 0;
 
-  const affine3f instanceInflateOutline =
-    affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f));
 
   // Make instance transforms
   for (auto it : modelToInstances) {
@@ -1036,11 +1034,13 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
         owl::affine3f trans = instanceTransform * owl::affine3f::translate(vec3f(b.x, b.y, b.z));
         transformsPerBrick.push_back(trans);
 
+#if 0
         if (this->enableToonOutline) {
           owl::affine3f trans = instanceTransform *
             owl::affine3f::translate(vec3f(b.x, b.y, b.z)) * instanceInflateOutline;
           outlineTransformsPerBrick.push_back(trans);
         }
+#endif
       }
     }
   }
@@ -1060,6 +1060,7 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
     colorIndicesPerBrick.push_back(249);  // grey in default palette
   }
 
+#if 0
   // Concat outline bricks onto regular bricks and mark them with visibility masks
   std::vector<uint8_t> visibilityMasks(transformsPerBrick.size() + outlineTransformsPerBrick.size());
   {
@@ -1068,6 +1069,7 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
     std::fill(visibilityMasks.begin(), visibilityMasks.begin() + count, VISIBILITY_RADIANCE | VISIBILITY_SHADOW);
     std::fill(visibilityMasks.begin()+count, visibilityMasks.end(), VISIBILITY_OUTLINE);
   }
+#endif
 
   // Apply final scene transform so we can use the same camera for every scene
   const float maxSpan = owl::reduce_max(sceneBox.span());
@@ -1087,11 +1089,43 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
   OWLGroup world = owlInstanceGroupCreate(context, transformsPerBrick.size(),
       nullptr, nullptr, (const float*)transformsPerBrick.data(), OWL_MATRIX_FORMAT_OWL);
 
-  for (int i = 0; i < int(transformsPerBrick.size()); ++i) {
-    owlInstanceGroupSetChild(world, i, trianglesGroup);  // All instances point to the same brick 
+  if (this->enableToonOutline) {
+    
+    // Add an extra instancing level with two nodes: one unit scale transform and one inflated scale for outlines.
+    // Mark the instance nodes with different visiblity masks.
+    
+    std::vector<affine3f> transforms = {
+      affine3f(),
+      affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f))
+      };
+    std::vector<OWLGroup> children = {trianglesGroup, trianglesGroup};
+
+    OWLGroup scaleGroup = owlInstanceGroupCreate(context, transforms.size(), (const OWLGroup*)children.data(), nullptr, 
+        (const float*)transforms.data(), OWL_MATRIX_FORMAT_OWL);
+
+    std::vector<uint8_t> visibilityMasks { VISIBILITY_RADIANCE | VISIBILITY_SHADOW, VISIBILITY_OUTLINE };
+    owlInstanceGroupSetVisibilityMasks(scaleGroup, visibilityMasks.data());
+    owlGroupBuildAccel(scaleGroup);
+
+    for (int i = 0; i < int(transformsPerBrick.size()); ++i) {
+      owlInstanceGroupSetChild(world, i, scaleGroup);
+    }
+
+    // Also use visibility masks at the top level, to remove the outline on the ground brick
+    if (this->enableGround) {
+      std::vector<uint8_t> topLevelVisibilityMasks(transformsPerBrick.size());
+      std::fill(topLevelVisibilityMasks.begin(), topLevelVisibilityMasks.end(), VISIBILITY_RADIANCE | VISIBILITY_SHADOW | VISIBILITY_OUTLINE );
+      topLevelVisibilityMasks[topLevelVisibilityMasks.size()-1] = VISIBILITY_RADIANCE | VISIBILITY_SHADOW;
+      owlInstanceGroupSetVisibilityMasks(world, topLevelVisibilityMasks.data());
+    }
+
+  } else {
+
+    for (int i = 0; i < int(transformsPerBrick.size()); ++i) {
+      owlInstanceGroupSetChild(world, i, trianglesGroup);  // All instances point to the same brick 
+    }
   }
 
-  owlInstanceGroupSetVisibilityMasks(world, visibilityMasks.data());
 
   owlGroupBuildAccel(world);
 

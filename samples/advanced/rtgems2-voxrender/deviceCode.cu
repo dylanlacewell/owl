@@ -386,7 +386,10 @@ OPTIX_CLOSEST_HIT_PROGRAM(TriangleMesh)()
 
 OPTIX_CLOSEST_HIT_PROGRAM(InstancedTriangleMesh)()
 {
-  unsigned int brickID = optixGetInstanceId();
+  //unsigned int brickID = optixGetInstanceId();
+  // In the case of multi-level instancing, optixGetInstanceId returns the lowest level.  We want the top level.
+  OptixTraversableHandle handle = optixGetTransformListHandle(0);
+  unsigned int brickID = optixGetInstanceIdFromHandle(handle);
   shadeTriangleOnBrick(brickID);
 }
 
