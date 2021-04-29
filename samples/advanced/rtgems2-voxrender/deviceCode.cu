@@ -119,7 +119,9 @@ OutlineShadowRay makeOutlineShadowRay(const vec3f &origin,
                                       float tmin,
                                       float tmax)
 {
-  return makeRay<OutlineShadowRay, VISIBILITY_OUTLINE>(origin, direction, tmin, tmax);
+  OutlineShadowRay ray = makeRay<OutlineShadowRay, VISIBILITY_OUTLINE>(origin, direction, tmin, tmax);
+  ray.time = 1.f; // because outline geom is encoded in time step 1
+  return ray;
 }
 
 inline __device__
@@ -355,6 +357,10 @@ void shade(const vec3f &Ng, const vec3f &color)
   }
 }
 
+
+inline __device__ vec3f lerp(const vec3f &A, const vec3f &B, float t)
+{ return (1.f-t)*A + t*B; }
+
 inline __device__
 void shadeTriangleOnBrick(unsigned int brickID)
 {
@@ -362,10 +368,21 @@ void shadeTriangleOnBrick(unsigned int brickID)
   
   // Compute normal for triangle
   const int   primID = optixGetPrimitiveIndex();
+  const float time    = optixGetRayTime();
   const vec3i index  = self.index[primID];
-  const vec3f &A     = self.vertex[index.x];
-  const vec3f &B     = self.vertex[index.y];
-  const vec3f &C     = self.vertex[index.z];
+  // Note: motion blur here
+  //const vec3f &A     = self.vertex[index.x];
+  //const vec3f &B     = self.vertex[index.y];
+  //const vec3f &C     = self.vertex[index.z];
+  const vec3f &A0     = self.vertex[index.x];
+  const vec3f &B0     = self.vertex[index.y];
+  const vec3f &C0     = self.vertex[index.z];
+  const vec3f &A1     = self.vertex1[index.x];
+  const vec3f &B1     = self.vertex1[index.y];
+  const vec3f &C1     = self.vertex1[index.z];
+  const vec3f A       = lerp(A0,A1,time);
+  const vec3f B       = lerp(B0,B1,time);
+  const vec3f C       = lerp(C0,C1,time);
   const vec3f Nbox   = normalize(cross(B-A,C-A));
   const vec3f Ng     = normalize(vec3f(optixTransformNormalFromObjectToWorldSpace(Nbox)));
 

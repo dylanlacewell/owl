@@ -47,6 +47,7 @@ struct TrianglesGeomData
 
   vec3i *index;
   vec3f *vertex;
+  vec3f *vertex1; // for motion blur for instanced triangles
 
   // For flat meshes, so we can get brickId from primId
   int primCountPerBrick;
