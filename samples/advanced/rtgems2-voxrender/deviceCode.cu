@@ -190,8 +190,8 @@ float traceShadowRay(const OptixTraversableHandle &traversable,
 {
   float vis = 0.f;
   owl::traceRay(traversable, ray, vis, 
-                   OPTIX_RAY_FLAG_DISABLE_ANYHIT
-                   | OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
+                   //OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                   OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
                    | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
   return vis;
 }
@@ -203,8 +203,8 @@ float traceOutlineShadowRay(const OptixTraversableHandle &traversable,
 {
   float vis = 0.f;
   owl::traceRay(traversable, ray, vis, 
-                   OPTIX_RAY_FLAG_DISABLE_ANYHIT
-                   | OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES
+                   // OPTIX_RAY_FLAG_DISABLE_ANYHIT |
+                   OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES
                    | OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
                    | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
   return vis;
@@ -388,6 +388,17 @@ OPTIX_CLOSEST_HIT_PROGRAM(InstancedTriangleMesh)()
 {
   unsigned int brickID = optixGetInstanceId();
   shadeTriangleOnBrick(brickID);
+}
+
+OPTIX_ANY_HIT_PROGRAM(InstancedTriangleMesh)()
+{
+  unsigned int mask = optixGetRayVisibilityMask();
+  unsigned int faceId = optixGetPrimitiveIndex();
+  if (mask & VISIBILITY_OUTLINE) {
+    if (faceId < NUM_BRICK_FACES) optixIgnoreIntersection();  // outline rays should only hit second scaled copy of brick
+  } else {
+    if (faceId >= NUM_BRICK_FACES) optixIgnoreIntersection();  // regular rays should only hit first copy of brick
+  }
 }
 
 OPTIX_BOUNDS_PROGRAM(VoxGeom)(const void *geomData,

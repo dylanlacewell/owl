@@ -953,24 +953,50 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
   owlGeomTypeSetClosestHit(trianglesGeomType,0,
                            module,"InstancedTriangleMesh");
 
+  if (this->enableToonOutline) {
+    owlGeomTypeSetAnyHit(trianglesGeomType,0,  // for primary rays: hide outline geom
+                             module,"InstancedTriangleMesh");
+    owlGeomTypeSetAnyHit(trianglesGeomType,1,  // for shadow rays: hide outline geom
+                             module,"InstancedTriangleMesh");
+    owlGeomTypeSetAnyHit(trianglesGeomType,2,  // for outline rays: hide regular geom
+                             module,"InstancedTriangleMesh");
+  }
+
   LOG("building triangle geometry for single brick ...");
 
 
   // ------------------------------------------------------------------
-  // triangle mesh for single unit brick
+  // triangle mesh for single unit brick, and scaled copy for outlines
   // ------------------------------------------------------------------
+
+  // TODO: only need the extra copy if toon outline is enabled
+  std::vector<vec3f> vertices(2*NUM_BRICK_VERTICES);
+  for (int i = 0; i < NUM_BRICK_VERTICES; ++i) {
+    vertices[i] = brickVertices[i];
+  }
+  const affine3f instanceInflateOutline =
+    affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f));
+  for (int i = 0; i < NUM_BRICK_VERTICES; ++i) {
+    vertices[NUM_BRICK_VERTICES+i] = xfmPoint(instanceInflateOutline, brickVertices[i]);
+  }
+  std::vector<vec3i> indices(2*NUM_BRICK_FACES);
+  for (int i = 0; i < NUM_BRICK_FACES; ++i) {
+    indices[i] = brickIndices[i];
+    indices[NUM_BRICK_FACES+i] = NUM_BRICK_VERTICES + indices[i];  // second copy has same indices
+  }
+
   OWLBuffer vertexBuffer
-    = allocator.deviceBufferCreate(context,OWL_FLOAT3,NUM_BRICK_VERTICES,brickVertices);
+    = allocator.deviceBufferCreate(context,OWL_FLOAT3,vertices.size(),vertices.data());
   OWLBuffer indexBuffer
-    = allocator.deviceBufferCreate(context,OWL_INT3,NUM_BRICK_FACES,brickIndices);
+    = allocator.deviceBufferCreate(context,OWL_INT3,indices.size(),indices.data());
 
   OWLGeom trianglesGeom
     = owlGeomCreate(context,trianglesGeomType);
   
   owlTrianglesSetVertices(trianglesGeom,vertexBuffer,
-                          NUM_BRICK_VERTICES,sizeof(vec3f),0);
+                          (int)vertices.size(),sizeof(vec3f),0);
   owlTrianglesSetIndices(trianglesGeom,indexBuffer,
-                         NUM_BRICK_FACES,sizeof(vec3i),0);
+                         (int)indices.size(),sizeof(vec3i),0);
   
   owlGeomSetBuffer(trianglesGeom,"vertex",vertexBuffer);
   owlGeomSetBuffer(trianglesGeom,"index",indexBuffer);
@@ -995,7 +1021,7 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
   LOG("building instances ...");
 
   std::vector<owl::affine3f> transformsPerBrick;
-  std::vector<owl::affine3f> outlineTransformsPerBrick;
+  //std::vector<owl::affine3f> outlineTransformsPerBrick;
   std::vector<unsigned char> colorIndicesPerBrick;
 
   assert(scene->num_instances > 0);
@@ -1013,8 +1039,6 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
 
   size_t totalSolidVoxelCount = 0;
 
-  const affine3f instanceInflateOutline =
-    affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f));
 
   // Make instance transforms
   for (auto it : modelToInstances) {
@@ -1036,11 +1060,13 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
         owl::affine3f trans = instanceTransform * owl::affine3f::translate(vec3f(b.x, b.y, b.z));
         transformsPerBrick.push_back(trans);
 
+#if 0
         if (this->enableToonOutline) {
           owl::affine3f trans = instanceTransform *
             owl::affine3f::translate(vec3f(b.x, b.y, b.z)) * instanceInflateOutline;
           outlineTransformsPerBrick.push_back(trans);
         }
+#endif
       }
     }
   }
@@ -1060,6 +1086,7 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
     colorIndicesPerBrick.push_back(249);  // grey in default palette
   }
 
+#if 0
   // Concat outline bricks onto regular bricks and mark them with visibility masks
   std::vector<uint8_t> visibilityMasks(transformsPerBrick.size() + outlineTransformsPerBrick.size());
   {
@@ -1068,6 +1095,7 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
     std::fill(visibilityMasks.begin(), visibilityMasks.begin() + count, VISIBILITY_RADIANCE | VISIBILITY_SHADOW);
     std::fill(visibilityMasks.begin()+count, visibilityMasks.end(), VISIBILITY_OUTLINE);
   }
+#endif
 
   // Apply final scene transform so we can use the same camera for every scene
   const float maxSpan = owl::reduce_max(sceneBox.span());
@@ -1091,7 +1119,14 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
     owlInstanceGroupSetChild(world, i, trianglesGroup);  // All instances point to the same brick 
   }
 
-  owlInstanceGroupSetVisibilityMasks(world, visibilityMasks.data());
+  if (this->enableGround && this->enableToonOutline) {
+    // use visibility mask to remove outline on ground plane brick
+    std::vector<uint8_t> visibilityMasks(transformsPerBrick.size());
+    std::fill(visibilityMasks.begin(), visibilityMasks.end(), VISIBILITY_RADIANCE | VISIBILITY_SHADOW | VISIBILITY_OUTLINE);
+    visibilityMasks[visibilityMasks.size()-1] = VISIBILITY_RADIANCE | VISIBILITY_SHADOW; // ground
+    owlInstanceGroupSetVisibilityMasks(world, visibilityMasks.data());
+  }
+
 
   owlGroupBuildAccel(world);
 
