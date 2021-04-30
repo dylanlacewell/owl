@@ -190,7 +190,6 @@ float traceShadowRay(const OptixTraversableHandle &traversable,
 {
   float vis = 0.f;
   owl::traceRay(traversable, ray, vis, 
-                   //OPTIX_RAY_FLAG_DISABLE_ANYHIT |
                    OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
                    | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
   return vis;
@@ -203,8 +202,8 @@ float traceOutlineShadowRay(const OptixTraversableHandle &traversable,
 {
   float vis = 0.f;
   owl::traceRay(traversable, ray, vis, 
-                   // OPTIX_RAY_FLAG_DISABLE_ANYHIT |
-                   OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES
+                   OPTIX_RAY_FLAG_DISABLE_ANYHIT
+                   | OPTIX_RAY_FLAG_CULL_FRONT_FACING_TRIANGLES
                    | OPTIX_RAY_FLAG_TERMINATE_ON_FIRST_HIT
                    | OPTIX_RAY_FLAG_DISABLE_CLOSESTHIT);
   return vis;
@@ -390,8 +389,11 @@ OPTIX_CLOSEST_HIT_PROGRAM(InstancedTriangleMesh)()
   shadeTriangleOnBrick(brickID);
 }
 
-OPTIX_ANY_HIT_PROGRAM(InstancedTriangleMesh)()
+// use this simple program to hide geometry based on ray type in the SBT
+OPTIX_ANY_HIT_PROGRAM(IgnoreIntersections)()
 {
+  optixIgnoreIntersection();
+#if 0
   unsigned int mask = optixGetRayVisibilityMask();
   unsigned int faceId = optixGetPrimitiveIndex();
   if (mask & VISIBILITY_OUTLINE) {
@@ -399,6 +401,7 @@ OPTIX_ANY_HIT_PROGRAM(InstancedTriangleMesh)()
   } else {
     if (faceId >= NUM_BRICK_FACES) optixIgnoreIntersection();  // regular rays should only hit first copy of brick
   }
+#endif
 }
 
 OPTIX_BOUNDS_PROGRAM(VoxGeom)(const void *geomData,

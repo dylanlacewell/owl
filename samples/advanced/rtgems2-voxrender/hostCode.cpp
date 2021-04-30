@@ -953,63 +953,78 @@ OWLGroup Viewer::createInstancedTriangleGeometryScene(OWLModule module, const og
   owlGeomTypeSetClosestHit(trianglesGeomType,0,
                            module,"InstancedTriangleMesh");
 
+  // Separate geom for outline triangles, which need AnyHit program
+  OWLGeomType outlineTrianglesGeomType
+    = owlGeomTypeCreate(context,
+                        OWL_TRIANGLES,
+                        sizeof(TrianglesGeomData),
+                        trianglesGeomVars,-1);
+
   if (this->enableToonOutline) {
-    owlGeomTypeSetAnyHit(trianglesGeomType,0,  // for primary rays: hide outline geom
-                             module,"InstancedTriangleMesh");
-    owlGeomTypeSetAnyHit(trianglesGeomType,1,  // for shadow rays: hide outline geom
-                             module,"InstancedTriangleMesh");
-    owlGeomTypeSetAnyHit(trianglesGeomType,2,  // for outline rays: hide regular geom
-                             module,"InstancedTriangleMesh");
+
+    // This type of geometry is hidden from primary and shadow rays.  Visibility masks are not 
+    // supported inside a GAS so use a simple AnyHit program.  No CH needed because we always ignore
+    // primary ray hits.
+    owlGeomTypeSetAnyHit(outlineTrianglesGeomType, 0, module, "IgnoreIntersections");
+    owlGeomTypeSetAnyHit(outlineTrianglesGeomType, 1, module, "IgnoreIntersections");
   }
 
   LOG("building triangle geometry for single brick ...");
 
 
   // ------------------------------------------------------------------
-  // triangle mesh for single unit brick, and scaled copy for outlines
+  // triangle mesh for single unit brick
   // ------------------------------------------------------------------
 
-  // TODO: only need the extra copy if toon outline is enabled
-  std::vector<vec3f> vertices(2*NUM_BRICK_VERTICES);
-  for (int i = 0; i < NUM_BRICK_VERTICES; ++i) {
-    vertices[i] = brickVertices[i];
-  }
-  const affine3f instanceInflateOutline =
-    affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f));
-  for (int i = 0; i < NUM_BRICK_VERTICES; ++i) {
-    vertices[NUM_BRICK_VERTICES+i] = xfmPoint(instanceInflateOutline, brickVertices[i]);
-  }
-  std::vector<vec3i> indices(2*NUM_BRICK_FACES);
-  for (int i = 0; i < NUM_BRICK_FACES; ++i) {
-    indices[i] = brickIndices[i];
-    indices[NUM_BRICK_FACES+i] = NUM_BRICK_VERTICES + indices[i];  // second copy has same indices
-  }
-
   OWLBuffer vertexBuffer
-    = allocator.deviceBufferCreate(context,OWL_FLOAT3,vertices.size(),vertices.data());
+    = allocator.deviceBufferCreate(context, OWL_FLOAT3, NUM_BRICK_VERTICES, brickVertices);
   OWLBuffer indexBuffer
-    = allocator.deviceBufferCreate(context,OWL_INT3,indices.size(),indices.data());
+    = allocator.deviceBufferCreate(context, OWL_INT3, NUM_BRICK_FACES, brickIndices);
+  OWLBuffer paletteBuffer
+    = allocator.deviceBufferCreate(context, OWL_UCHAR4, 256, scene->palette.color);
 
   OWLGeom trianglesGeom
-    = owlGeomCreate(context,trianglesGeomType);
-  
-  owlTrianglesSetVertices(trianglesGeom,vertexBuffer,
-                          (int)vertices.size(),sizeof(vec3f),0);
-  owlTrianglesSetIndices(trianglesGeom,indexBuffer,
-                         (int)indices.size(),sizeof(vec3i),0);
+    = owlGeomCreate(context, trianglesGeomType);
+
+  owlTrianglesSetVertices(trianglesGeom, vertexBuffer,
+                          NUM_BRICK_VERTICES, sizeof(vec3f), 0);
+  owlTrianglesSetIndices(trianglesGeom, indexBuffer,
+                         NUM_BRICK_FACES, sizeof(vec3i), 0);
   
   owlGeomSetBuffer(trianglesGeom,"vertex",vertexBuffer);
   owlGeomSetBuffer(trianglesGeom,"index",indexBuffer);
-
-  OWLBuffer paletteBuffer
-    = allocator.deviceBufferCreate(context, OWL_UCHAR4, 256, scene->palette.color);
   owlGeomSetBuffer(trianglesGeom, "colorPalette", paletteBuffer);
+
+  OWLGroup trianglesGroup;
+  if (this->enableToonOutline) {
+    // Inflate vertices
+    const affine3f instanceInflateOutline =
+      affine3f::translate(vec3f(0.5f)) * affine3f::scale(vec3f(OUTLINE_SCALE)) * affine3f::translate(vec3f(-0.5f));
+    std::vector<vec3f> vertices(NUM_BRICK_VERTICES);
+    for (int i = 0; i < NUM_BRICK_VERTICES; ++i) {
+      vertices[i] = xfmPoint(instanceInflateOutline, brickVertices[i]);
+    }
+    OWLBuffer outlineVertexBuffer
+      = allocator.deviceBufferCreate(context, OWL_FLOAT3, (int)vertices.size(), vertices.data());
+
+    OWLGeom outlineTrianglesGeom = owlGeomCreate(context, outlineTrianglesGeomType);
+    owlTrianglesSetVertices(outlineTrianglesGeom, outlineVertexBuffer,
+                            (int)vertices.size(), sizeof(vec3f), 0);
+    owlTrianglesSetIndices(outlineTrianglesGeom, indexBuffer,
+                          NUM_BRICK_FACES, sizeof(vec3i), 0);
+    owlGeomSetBuffer(outlineTrianglesGeom, "vertex", outlineVertexBuffer);
+    owlGeomSetBuffer(outlineTrianglesGeom, "index", indexBuffer);
+
+    OWLGeom geoms[2] = {trianglesGeom, outlineTrianglesGeom};
+    trianglesGroup = owlTrianglesGeomGroupCreate(context, 2, geoms);
+
+  } else {
+    trianglesGroup = owlTrianglesGeomGroupCreate(context, 1, &trianglesGeom);
+  }
   
   // ------------------------------------------------------------------
   // the group/accel for the one brick
   // ------------------------------------------------------------------
-  OWLGroup trianglesGroup
-    = owlTrianglesGeomGroupCreate(context,1,&trianglesGeom);
   owlGroupBuildAccel(trianglesGroup);
   uint64_t bottomLevelBvhSizeInBytes = getAccelSizeInBytes(trianglesGroup);
 
